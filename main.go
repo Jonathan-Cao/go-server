@@ -64,6 +64,7 @@ func main() {
 	r.POST("/users", createUserHandler(users))
 	r.PUT("/users/:id", updateUserHandler(users))
 	r.POST("/login", loginHandler(users))
+	r.POST("/logout", logoutHandler)
 	r.GET("/protected", authMiddleware(), func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"message": "You are authorized"})
 	})
@@ -238,6 +239,17 @@ func loginHandler(users *mongo.Collection) func(c *gin.Context) {
 
 		c.JSON(http.StatusOK, gin.H{"token": token})
 	}
+}
+
+func logoutHandler(c *gin.Context) {
+	cookie := http.Cookie{
+		Name:    "jwt",
+		Value:   "",
+		Expires: time.Now().Add(-time.Hour),
+		Path:    "/",
+	}
+	http.SetCookie(c.Writer, &cookie)
+	c.JSON(http.StatusOK, gin.H{"message": "Logged out"})
 }
 
 func createToken(email string) string {
