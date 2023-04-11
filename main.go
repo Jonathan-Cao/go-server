@@ -251,10 +251,10 @@ func loginHandler(users *mongo.Collection, redisClient *redis.Client) func(c *gi
 			return
 		}
 
-		// If credentials are valid, create a new JWT token
+		// Create a new JWT token
 		token := createToken(creds.Email)
 
-		// Generate a new random UUID
+		// Generate a new random UUID for sessionID
 		sessionID := uuid.New().String()
 		// Add session to Redis cache
 		err2 := redisClient.Set(c, sessionID, token, time.Hour).Err()
@@ -263,6 +263,7 @@ func loginHandler(users *mongo.Collection, redisClient *redis.Client) func(c *gi
 			return
 		}
 
+		// Set cookie with sessionID
 		cookie := http.Cookie{
 			Name:     "session",
 			Value:    sessionID,
@@ -273,6 +274,15 @@ func loginHandler(users *mongo.Collection, redisClient *redis.Client) func(c *gi
 
 		c.JSON(http.StatusOK, gin.H{"session": sessionID})
 	}
+}
+
+func createToken(email string) string {
+	token := jwt.New(jwt.SigningMethodHS256)
+	claims := token.Claims.(jwt.MapClaims)
+	claims["email"] = email
+	claims["exp"] = time.Now().Add(time.Hour * 24).Unix()
+	tokenString, _ := token.SignedString([]byte("my_secret_key"))
+	return tokenString
 }
 
 func logoutHandler(redisClient *redis.Client) gin.HandlerFunc {
@@ -291,40 +301,31 @@ func logoutHandler(redisClient *redis.Client) gin.HandlerFunc {
 			return
 		}
 
+		// Set expire cookie to delete cookie
 		expireCookie := http.Cookie{
 			Name:    "session",
 			Value:   "",
 			Expires: time.Now().Add(-time.Hour),
 			Path:    "/",
 		}
-
 		http.SetCookie(c.Writer, &expireCookie)
+
 		c.JSON(http.StatusOK, gin.H{"message": "Logged out"})
 	}
 }
 
-func createToken(email string) string {
-	token := jwt.New(jwt.SigningMethodHS256)
-	claims := token.Claims.(jwt.MapClaims)
-	claims["email"] = email
-	claims["exp"] = time.Now().Add(time.Hour * 24).Unix()
-	tokenString, _ := token.SignedString([]byte("my_secret_key"))
-	return tokenString
-}
-
 func authMiddleware(redisClient *redis.Client) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		// Get the token from the cookie
+		// Get the sessionID from the cookie
 		cookie, err := c.Request.Cookie("session")
 		if err != nil {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
 			c.Abort()
 			return
 		}
-
 		sessionID := cookie.Value
 
-		// Check if session exists in Redis cache
+		// Check if session exists in Redis cache and retrieve jwt token
 		tokenString, err2 := redisClient.Get(c, sessionID).Result()
 		if err2 != nil {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
@@ -332,6 +333,7 @@ func authMiddleware(redisClient *redis.Client) gin.HandlerFunc {
 			return
 		}
 
+		// Validate jwt token
 		token, err3 := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
 			if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
 				return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
