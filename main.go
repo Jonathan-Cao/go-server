@@ -45,10 +45,10 @@ func main() {
 	db := client.Database("go-server")
 	users := db.Collection("users")
 
-	// Make name unique
+	// Make email unique
 	indexModel := mongo.IndexModel{
 		Keys: bson.M{
-			"name": 1,
+			"email": 1,
 		},
 		Options: options.Index().SetUnique(true),
 	}
@@ -92,6 +92,10 @@ func createUserHandler(users *mongo.Collection) func(c *gin.Context) {
 		}
 
 		name, email, password := userCreationRequest.Name, userCreationRequest.Email, userCreationRequest.Password
+		if name == "" || email == "" || password == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Name, Email or Password missing."})
+			return
+		}
 		salt, err := generateSalt()
 		hashedPassword, err := hashPassword(password, salt)
 		if err != nil {
@@ -107,7 +111,7 @@ func createUserHandler(users *mongo.Collection) func(c *gin.Context) {
 
 		_, err2 := users.InsertOne(context.Background(), user)
 		if mongo.IsDuplicateKeyError(err2) {
-			c.JSON(http.StatusConflict, gin.H{"error": "User with this name already exists"})
+			c.JSON(http.StatusConflict, gin.H{"error": "User with this email already exists"})
 			return
 		}
 		if err != nil {
@@ -205,16 +209,22 @@ func loginHandler(users *mongo.Collection) func(c *gin.Context) {
 			return
 		}
 
+		email, password := creds.Email, creds.Password
+		if email == "" || password == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Email or Password missing"})
+			return
+		}
+
 		// Query the database to validate the user credentials
 		var user User
-		filter := bson.M{"email": creds.Email}
+		filter := bson.M{"email": email}
 		if err := users.FindOne(context.Background(), filter).Decode(&user); err != nil {
 			c.JSON(http.StatusNotFound, gin.H{"error": "User not found"})
 			return
 		}
 
 		// Hash request password with retrieved salt
-		hashedPassword, err := hashPassword(creds.Password, user.Salt)
+		hashedPassword, err := hashPassword(password, user.Salt)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
